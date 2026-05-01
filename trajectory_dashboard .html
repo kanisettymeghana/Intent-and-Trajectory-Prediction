@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>TrajectAI — L4 Intent & Trajectory Prediction</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#07090d;
+  --surface:#0e1117;
+  --surface2:#141820;
+  --border:#1e2530;
+  --border2:#2a3340;
+  --green:#00e87a;
+  --green-dim:#00e87a30;
+  --amber:#ffb800;
+  --amber-dim:#ffb80025;
+  --red:#ff3d55;
+  --red-dim:#ff3d5525;
+  --blue:#4d9fff;
+  --blue-dim:#4d9fff25;
+  --cyan:#00d4ff;
+  --text:#dde3ec;
+  --text2:#6b7585;
+  --text3:#3d4856;
+  --mono:'Space Mono',monospace;
+  --sans:'DM Sans',sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);overflow:hidden}
+
+/* LAYOUT */
+.app{display:grid;height:100vh;grid-template-rows:52px 1fr 64px;grid-template-columns:1fr 320px}
+.header{grid-column:1/-1;display:flex;align-items:center;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--border);gap:16px;justify-content:space-between}
+.canvas-wrap{position:relative;overflow:hidden;background:var(--bg)}
+.sidebar{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
+.controls{grid-column:1/-1;background:var(--surface);border-top:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:20px}
+
+/* HEADER */
+.logo{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--green);letter-spacing:1px}
+.logo span{color:var(--text2);font-weight:400}
+.badge{padding:3px 10px;border-radius:4px;font-size:10px;font-family:var(--mono);letter-spacing:.5px;font-weight:700;text-transform:uppercase}
+.badge-model{background:var(--blue-dim);border:1px solid #4d9fff50;color:var(--blue)}
+.badge-live{background:var(--green-dim);border:1px solid #00e87a50;color:var(--green);display:flex;align-items:center;gap:5px}
+.badge-live::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.header-right{display:flex;align-items:center;gap:10px}
+.header-stat{font-family:var(--mono);font-size:10px;color:var(--text2);display:flex;flex-direction:column;align-items:flex-end}
+.header-stat strong{color:var(--text);font-size:13px}
+
+/* CANVAS */
+#viz{display:block;width:100%;height:100%}
+
+/* SCAN LINE EFFECT */
+.scanline{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px);z-index:2}
+.corner{position:absolute;width:20px;height:20px;border-color:var(--green);border-style:solid;opacity:.4}
+.corner-tl{top:12px;left:12px;border-width:2px 0 0 2px}
+.corner-tr{top:12px;right:12px;border-width:2px 2px 0 0}
+.corner-bl{bottom:12px;left:12px;border-width:0 0 2px 2px}
+.corner-br{bottom:12px;right:12px;border-width:0 2px 2px 0}
+
+/* SIDEBAR SECTIONS */
+.sidebar-section{border-bottom:1px solid var(--border);padding:14px 16px}
+.section-title{font-size:9px;font-family:var(--mono);color:var(--text2);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:12px}
+
+/* AGENT LIST */
+.agent-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;transition:background .15s;margin-bottom:4px;border:1px solid transparent}
+.agent-item:hover{background:var(--surface2)}
+.agent-item.active{background:var(--surface2);border-color:var(--border2)}
+.agent-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.agent-info{flex:1}
+.agent-name{font-size:12px;font-weight:500;color:var(--text)}
+.agent-type{font-size:10px;color:var(--text2);font-family:var(--mono)}
+.agent-risk{font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 7px;border-radius:3px}
+.risk-high{background:var(--red-dim);color:var(--red)}
+.risk-med{background:var(--amber-dim);color:var(--amber)}
+.risk-low{background:var(--green-dim);color:var(--green)}
+
+/* METRICS */
+.metrics-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.metric-card{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px 12px}
+.metric-label{font-size:9px;font-family:var(--mono);color:var(--text2);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
+.metric-value{font-size:20px;font-family:var(--mono);font-weight:700;color:var(--text);line-height:1}
+.metric-value span{font-size:11px;font-weight:400;color:var(--text2);margin-left:2px}
+.metric-delta{font-size:10px;margin-top:3px;font-family:var(--mono)}
+.delta-good{color:var(--green)}
+.delta-bad{color:var(--red)}
+
+/* INTENT */
+.intent-display{display:flex;align-items:center;gap:12px}
+.intent-icon{width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.intent-label{font-size:18px;font-weight:600;color:var(--text);line-height:1.2}
+.intent-sub{font-size:11px;color:var(--text2);margin-top:3px;font-family:var(--mono)}
+.confidence-bar{margin-top:12px}
+.conf-label{font-size:9px;font-family:var(--mono);color:var(--text2);letter-spacing:1px;margin-bottom:5px}
+.conf-track{height:4px;background:var(--surface2);border-radius:2px;overflow:hidden}
+.conf-fill{height:100%;border-radius:2px;transition:width .5s ease}
+.conf-row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.conf-name{font-size:10px;color:var(--text2);width:60px;font-family:var(--mono)}
+.conf-pct{font-size:10px;font-family:var(--mono);color:var(--text);width:32px;text-align:right}
+
+/* PATHS LEGEND */
+.paths-legend{display:flex;flex-direction:column;gap:6px}
+.legend-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)}
+.legend-line{width:28px;height:2px;border-radius:1px}
+.legend-dash{width:28px;height:0;border-top:2px dashed}
+
+/* CONTROLS */
+.ctrl-group{display:flex;align-items:center;gap:8px}
+.ctrl-label{font-size:10px;font-family:var(--mono);color:var(--text2);letter-spacing:.5px;white-space:nowrap}
+.btn{padding:6px 14px;border-radius:5px;border:1px solid var(--border2);background:var(--surface2);color:var(--text);font-size:11px;font-family:var(--mono);cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn:hover{border-color:var(--green);color:var(--green)}
+.btn.active{background:var(--green-dim);border-color:var(--green);color:var(--green)}
+.btn-play{background:var(--green-dim);border-color:var(--green);color:var(--green);padding:6px 16px;font-weight:700}
+.btn-play:hover{background:var(--green);color:var(--bg)}
+input[type=range]{-webkit-appearance:none;height:3px;border-radius:2px;background:var(--border2);outline:none;width:100px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--green);cursor:pointer}
+.ctrl-sep{width:1px;height:30px;background:var(--border);flex-shrink:0}
+.ctrl-spacer{flex:1}
+
+/* TOOLTIP */
+.tooltip{position:absolute;background:var(--surface);border:1px solid var(--border2);border-radius:6px;padding:8px 12px;font-size:11px;font-family:var(--mono);pointer-events:none;z-index:10;min-width:140px;display:none}
+.tooltip-title{color:var(--green);font-weight:700;margin-bottom:4px;font-size:12px}
+.tooltip-row{display:flex;justify-content:space-between;gap:16px;color:var(--text2)}
+.tooltip-row span{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- HEADER -->
+<header class="header">
+  <div style="display:flex;align-items:center;gap:14px">
+    <div class="logo">TRAJECT<span>AI</span></div>
+    <div class="badge badge-model">⚡ Transformer Model</div>
+    <div class="badge badge-live">Live Demo</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);font-family:var(--mono)">
+    nuScenes v1.0-mini &nbsp;·&nbsp; 8 agents tracked &nbsp;·&nbsp; 2s obs → 3s pred
+  </div>
+  <div class="header-right">
+    <div class="header-stat"><span>minADE@3</span><strong id="h-ade">1.24m</strong></div>
+    <div class="header-stat"><span>minFDE@3</span><strong id="h-fde">2.11m</strong></div>
+    <div class="header-stat"><span>Intent Acc</span><strong id="h-intent" style="color:var(--green)">91.3%</strong></div>
+  </div>
+</header>
+
+<!-- CANVAS -->
+<div class="canvas-wrap">
+  <canvas id="viz"></canvas>
+  <div class="scanline"></div>
+  <div class="corner corner-tl"></div>
+  <div class="corner corner-tr"></div>
+  <div class="corner corner-bl"></div>
+  <div class="corner corner-br"></div>
+  <div class="tooltip" id="tooltip">
+    <div class="tooltip-title" id="tt-name">Agent #1</div>
+    <div class="tooltip-row">Intent <span id="tt-intent">Crossing</span></div>
+    <div class="tooltip-row">Risk <span id="tt-risk">High</span></div>
+    <div class="tooltip-row">Speed <span id="tt-speed">1.4 m/s</span></div>
+  </div>
+</div>
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <!-- Agents -->
+  <div class="sidebar-section" style="flex-shrink:0">
+    <div class="section-title">Tracked Agents</div>
+    <div id="agent-list"></div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="sidebar-section" style="flex-shrink:0">
+    <div class="section-title">Prediction Metrics</div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">ADE</div>
+        <div class="metric-value" id="m-ade">1.24<span>m</span></div>
+        <div class="metric-delta delta-good">▼ 31% vs TRANSFORMERS</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">FDE</div>
+        <div class="metric-value" id="m-fde">2.11<span>m</span></div>
+        <div class="metric-delta delta-good">▼ 28% vs TRANSFORMERS</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">minADE@3</div>
+        <div class="metric-value" id="m-made">0.87<span>m</span></div>
+        <div class="metric-delta delta-good">▼ Best of 3</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">minFDE@3</div>
+        <div class="metric-value" id="m-mfde">1.43<span>m</span></div>
+        <div class="metric-delta delta-good">▼ Best of 3</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Intent -->
+  <div class="sidebar-section" style="flex-shrink:0">
+    <div class="section-title">Intent Classification</div>
+    <div class="intent-display" id="intent-display">
+      <div class="intent-icon" id="intent-icon" style="background:var(--red-dim)">🚶</div>
+      <div>
+        <div class="intent-label" id="intent-label">Crossing</div>
+        <div class="intent-sub" id="intent-sub">Road crossing detected</div>
+      </div>
+    </div>
+    <div class="confidence-bar" style="margin-top:10px">
+      <div class="conf-label">Class Confidence</div>
+      <div id="conf-bars"></div>
+    </div>
+  </div>
+
+  <!-- Collision Score -->
+  <div class="sidebar-section" id="collision-section" style="flex-shrink:0">
+    <div class="section-title">Collision Risk Score</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span id="collision-label" style="font-size:12px;font-weight:600;font-family:var(--mono)">LOW RISK</span>
+      <span id="collision-pct" style="font-size:14px;font-family:var(--mono);font-weight:700">0%</span>
+    </div>
+    <div class="conf-track" style="height:7px;border-radius:4px">
+      <div id="collision-bar" style="height:100%;border-radius:4px;width:0%;transition:width .4s ease,background .4s ease"></div>
+    </div>
+    <div style="font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:6px">
+      Min dist to any car's predicted path
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="sidebar-section" style="flex:1">
+    <div class="section-title">Visual Legend</div>
+    <div class="paths-legend">
+      <div class="legend-row"><div class="legend-line" style="background:var(--blue)"></div>Past trajectory (2s)</div>
+      <div class="legend-row"><div class="legend-dash" style="border-color:var(--green)"></div>Path 1 — high prob</div>
+      <div class="legend-row"><div class="legend-dash" style="border-color:var(--amber)"></div>Path 2 — medium prob</div>
+      <div class="legend-row"><div class="legend-dash" style="border-color:var(--red)"></div>Path 3 — low prob</div>
+      <div class="legend-row" style="margin-top:6px"><div style="width:28px;height:10px;background:radial-gradient(circle,rgba(255,61,85,.3),transparent);border-radius:50%"></div>Risk zone (high)</div>
+      <div class="legend-row"><div style="width:28px;height:10px;background:radial-gradient(circle,rgba(255,184,0,.2),transparent);border-radius:50%"></div>Risk zone (med)</div>
+      <div class="legend-row"><div style="width:28px;height:10px;background:radial-gradient(circle,rgba(0,232,122,.15),transparent);border-radius:50%"></div>Risk zone (safe)</div>
+    </div>
+  </div>
+</div>
+
+<!-- CONTROLS -->
+<div class="controls">
+  <div class="ctrl-group">
+    <button class="btn btn-play" id="btn-play" onclick="togglePlay()">▶ PLAY</button>
+  </div>
+  <div class="ctrl-sep"></div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">TIME HORIZON</span>
+    <input type="range" id="horizon-slider" min="1" max="3" step="0.5" value="3" oninput="updateHorizon(this.value)">
+    <span id="horizon-val" style="font-size:11px;font-family:var(--mono);color:var(--green);width:28px">3s</span>
+  </div>
+  <div class="ctrl-sep"></div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">SHOW</span>
+    <button class="btn active" id="btn-p1" onclick="toggleLayer('p1',this)">PATH 1</button>
+    <button class="btn active" id="btn-p2" onclick="toggleLayer('p2',this)">PATH 2</button>
+    <button class="btn active" id="btn-p3" onclick="toggleLayer('p3',this)">PATH 3</button>
+  </div>
+  <div class="ctrl-sep"></div>
+  <div class="ctrl-group">
+    <button class="btn active" id="btn-risk" onclick="toggleLayer('risk',this)">RISK ZONES</button>
+    <button class="btn active" id="btn-intent" onclick="toggleLayer('intent',this)">INTENT LABELS</button>
+    <button class="btn active" id="btn-uncert" onclick="toggleLayer('uncert',this)">UNCERTAINTY</button>
+  </div>
+  <div class="ctrl-spacer"></div>
+  <div style="font-size:10px;font-family:var(--mono);color:var(--text3)">
+    POST http://127.0.0.1:8000/predict &nbsp;→&nbsp; FastAPI ready
+  </div>
+</div>
+</div>
+
+<script>
+const canvas = document.getElementById('viz');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+
+// ─── CONFIG ───────────────────────────────────────────────────────
+const SCALE = 28;
+const OX = 0, OY = 0;
+const PAST_FRAMES = 20;
+const PRED_FRAMES = 30;
+const FPS = 30;
+
+// ─── LAYERS ───────────────────────────────────────────────────────
+const layers = {p1:true, p2:true, p3:true, risk:true, intent:true, uncert:true};
+
+// ─── AGENTS ───────────────────────────────────────────────────────
+// Scene layout (world units, safe range x:0-21, y:0-14):
+//   Main road  : y=11.5 (wide band y=10 to y=13)
+//   Upper road : y=6
+//   Left side  : x=0-4   Right side: x=17-21
+//   Crosswalk  : x=5 to x=8
+//
+// Each agent: start far from road → past 20 steps walk toward/along road
+//             predictions show 3 futures from where they end up
+
+// Scene world units (safe range x:0–22, y:0–15):
+//   Main road  y=10.5  (cars + cyclist + crossers)
+//   Upper road y=5.0   (second car lane)
+//   Crosswalk  x=5–8   (bottom-left crossing zone)
+//   Right cross x=16–18 (top-right crossing zone)
+const AGENTS = [
+  // ── PEDESTRIANS ──────────────────────────────────────────────────
+  {
+    id:0, name:'PED-001', type:'Pedestrian', color:'#ff3d55', isCar:false,
+    intent:'Crossing', intClasses:['Crossing','Walking','Stopped'],
+    intConf:[.85,.12,.03], intIcon:'🚶', risk:'HIGH', speedMult:0.7, speed:'1.4 m/s',
+    // Approaches crosswalk from bottom-left
+    past: genPath(1.5, 14.5, .22, -.20, 20, .04),
+    preds:[
+      genPath(5.9, 10.5,  .06, -.13, 30, .04),
+      genPath(5.9, 10.5,  .16, -.05, 30, .04),
+      genPath(5.9, 10.5,  .02, -.01, 30, .04),
+    ],
+    delay: 10,
+    probWeights:[.72,.20,.08]
+  },
+  {
+    id:1, name:'PED-002', type:'Pedestrian', color:'#ffb800', isCar:false,
+    intent:'Walking', intClasses:['Crossing','Walking','Stopped'],
+    intConf:[.08,.84,.08], intIcon:'🚶', risk:'MED', speedMult:0.85, speed:'1.1 m/s',
+    // Top-left sidewalk walking rightward
+    past: genPath(0.5, 2.5, .13, .01, 20, .04),
+    preds:[
+      genPath(3.1, 2.7,  .13,  .01, 30, .04),
+      genPath(3.1, 2.7,  .16, -.03, 30, .04),
+      genPath(3.1, 2.7,  .09,  .07, 30, .04),
+    ],
+    probWeights:[.65,.25,.10]
+  },
+  {
+    id:2, name:'Cyclist', type:'Cyclist', color:'#00e87a', isCar:false,
+    intent:'Cycling', intClasses:['Cycling','Crossing','Stopped'],
+    intConf:[.88,.09,.03], intIcon:'🚴', risk:'LOW', speedMult:1.2, speed:'3.8 m/s',
+    // Far-left main road, riding fast rightward
+    past: genPath(0, 10.2, .21, .01, 20, .02),
+    preds:[
+      genPath(4.2, 10.4,  .21,  .01, 30, .02),
+      genPath(4.2, 10.4,  .21, -.06, 30, .02),
+      genPath(4.2, 10.4,  .18,  .05, 30, .02),
+    ],
+    probWeights:[.74,.16,.10]
+  },
+  {
+    id:3, name:'PED-003', type:'Pedestrian', color:'#bf7fff', isCar:false,
+    intent:'Crossing', intClasses:['Crossing','Walking','Stopped'],
+    intConf:[.78,.17,.05], intIcon:'🚶', risk:'HIGH', speedMult:0.55, speed:'1.6 m/s',
+    // Top-right, crossing downward onto main road
+    past: genPath(8, 4.3, 0.0, 0.08, 20, 0.04),
+    preds:[
+      genPath(8, 5.9, 0.0, 0.08, 30, 0.04),   // straight crossing
+      genPath(8, 5.9, 0.05, 0.06, 30, 0.04),  // slight right drift
+      genPath(8, 5.9, -0.05, 0.06, 30, 0.04), // slight left drift
+    ],
+    delay: 5,
+    probWeights:[.68,.22,.10]
+  },
+  // ── ANIMALS ──────────────────────────────────────────────────────
+  {
+    id:4, name:'DOG-001', type:'Animal · Dog', color:'#ff9f4a', isCar:false,
+    intent:'Roaming', intClasses:['Roaming','Crossing','Stopped'],
+    intConf:[.72,.20,.08], intIcon:'🐕', risk:'HIGH', speedMult:0.9, speed:'2.8 m/s',
+    // Middle of scene, darting erratically toward main road
+    past: genPath(19, 4.2, 0.02, 0.07, 20, 0.08),
+    preds:[
+      genPath(19.4, 5.6, 0.03, 0.07, 30, 0.10),   // continues down
+      genPath(19.4, 5.6, -0.08, 0.05, 30, 0.10), // slight left deviation
+      genPath(19.4, 5.6, 0.08, 0.04, 30, 0.10),  // slight right hesitation
+    ],
+    delay: 30,
+    probWeights:[.48,.32,.20]
+  },
+  {
+    id:5, name:'COW-001', type:'Animal · Cow', color:'#c8a87a', isCar:false,
+    intent:'Grazing', intClasses:['Grazing','Roaming','Crossing'],
+    intConf:[.83,.12,.05], intIcon:'🐄', risk:'HIGH', speedMult:0.6, speed:'0.5 m/s',
+    // Right-center, barely moving, blocking main road
+    past: genPath(16.5, 10.8, -0.02, 0.01, 20, 0.05),
+    preds:[
+      genPath(16.1, 11.0, -0.03, 0.02, 30, 0.06),
+      genPath(16.1, 11.0, -0.06, 0.01, 30, 0.06),
+      genPath(16.1, 11.0, 0.02, -0.01, 30, 0.06),
+    ],
+    probWeights:[.58,.26,.16]
+  },
+  // ── CARS ─────────────────────────────────────────────────────────
+  {
+    id:6, name:'CAR-001', type:'Vehicle · Car', color:'#4d9fff', isCar:true,
+    intent:'Straight', intClasses:['Straight','Turning','Braking'],
+    intConf:[.88,.09,.03], intIcon:'🚗', risk:'HIGH', speedMult:1.8, speed:'14 m/s',
+    activePred: 0,   // 0=straight, 2=braking — updated dynamically
+    braking: false,
+    // Far-right main road, driving fast leftward
+    past: genPath(21.5, 10.2, -.34, 0, 20, .01),
+    preds:[
+      genPath(14.3, 10.2,       -.34,  .00, 30, .01),   // straight → collision course
+      genPath(14.3, 10.2,       -.28, -.10, 30, .01),   // swerve up (avoidance)
+      genSlowdownPath(14.3, 10.2, -.34,  .00, 30, .09),  // BRAKING → stops ~x=10.5
+    ],
+    probWeights:[.82,.12,.06]
+  },
+  {
+    id:7, name:'CAR-002', type:'Vehicle · Car', color:'#00d4ff', isCar:true,
+    intent:'Straight', intClasses:['Straight','Turning','Braking'],
+    intConf:[.83,.12,.05], intIcon:'🚗', risk:'MED', speedMult:1.6, speed:'12 m/s',
+    activePred: 0,
+    braking: false,
+    // Far-left upper road, driving rightward
+    past: genPath(0, 5.0, .31, 0, 20, .01),
+    preds:[
+      genPath(6.2, 5.0,        .31,  .00, 30, .01),
+      genPath(6.2, 5.0,        .26,  .07, 30, .01),
+      genSlowdownPath(6.2, 5.0, .31,  .00, 30, .09),    // BRAKING
+    ],
+    probWeights:[.80,.14,.06]
+  }
+];
+
+function genPath(sx, sy, vx, vy, n, noise=0.04) {
+  const pts = [];
+  let x = sx, y = sy;
+  for (let i = 0; i < n; i++) {
+    pts.push({x, y});
+    x += vx + (Math.random()-.5)*noise;
+    y += vy + (Math.random()-.5)*noise;
+  }
+  return pts;
+}
+
+// Decelerating path — speed bleeds off each step so car stops naturally
+function genSlowdownPath(sx, sy, vx, vy, n, slowdown=0.03, noise=0.01) {
+  const pts = [];
+  let x = sx, y = sy, cvx = vx, cvy = vy;
+  for (let i = 0; i < n; i++) {
+    pts.push({x, y});
+    const dynamicSlow = slowdown * 0.6;
+    cvx *= (1 - slowdown);
+    cvy *= (1 - slowdown);
+    x += cvx + (Math.random()-.5)*noise;
+    y += cvy + (Math.random()-.5)*noise;
+  }
+  return pts;
+}
+
+// ─── STATE ────────────────────────────────────────────────────────
+let activeAgent = 0;
+let playing = false;
+let frame = 0;
+let horizonFraction = 1.0;
+let animId = null;
+
+// ─── CANVAS RESIZE ────────────────────────────────────────────────
+function resize() {
+  const wrap = canvas.parentElement;
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  draw();
+}
+window.addEventListener('resize', resize);
+
+// ─── COORDINATE TRANSFORM ────────────────────────────────────────
+function tx(wx) { return wx * SCALE + canvas.width  * .12; }
+function ty(wy) { return wy * SCALE + canvas.height * .08; }
+
+// ─── DRAW ─────────────────────────────────────────────────────────
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  drawGrid(W, H);
+  if (layers.risk) drawRiskZones();
+  drawAllAgents();
+  if (layers.intent) drawIntentLabels();
+}
+
+function drawGrid(W, H) {
+  ctx.strokeStyle = '#1a2030';
+  ctx.lineWidth = .5;
+  const step = SCALE;
+  for (let x = (tx(0) % step); x < W; x += step) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = (ty(0) % step); y < H; y += step) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  // Main road y=10.5, upper road y=5.0
+  ctx.strokeStyle = '#1e2a38';
+  ctx.lineWidth = SCALE * 3.2;
+  ctx.beginPath(); ctx.moveTo(0, ty(10.5)); ctx.lineTo(W, ty(10.5)); ctx.stroke();
+  ctx.strokeStyle = '#151d28';
+  ctx.lineWidth = SCALE * 2.0;
+  ctx.beginPath(); ctx.moveTo(0, ty(5.0)); ctx.lineTo(W, ty(5.0)); ctx.stroke();
+  // Dashed center lines
+  ctx.strokeStyle = '#ffb80022';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([SCALE*.6, SCALE*.4]);
+  ctx.beginPath(); ctx.moveTo(0, ty(10.5)); ctx.lineTo(W, ty(10.5)); ctx.stroke();
+  ctx.strokeStyle = '#ffffff10';
+  ctx.setLineDash([SCALE*.4, SCALE*.5]);
+  ctx.beginPath(); ctx.moveTo(0, ty(5.0)); ctx.lineTo(W, ty(5.0)); ctx.stroke();
+  ctx.setLineDash([]);
+  // Crosswalk stripes — main road at x=5–8
+  ctx.fillStyle = '#ffffff07';
+  for (let i = 0; i < 6; i++) {
+    ctx.fillRect(tx(5) + i*(SCALE*.52), ty(9.1), SCALE*.32, SCALE*2.8);
+  }
+  // Right crosswalk at x=16–18
+  for (let i = 0; i < 4; i++) {
+    ctx.fillRect(tx(16) + i*(SCALE*.54), ty(9.1), SCALE*.34, SCALE*2.8);
+  }
+}
+
+function drawRiskZones() {
+  AGENTS.forEach(ag => {
+    const endFrame = Math.max(1, Math.min(Math.floor(horizonFraction * PRED_FRAMES), ag.preds[0].length - 1));
+    const ep = ag.preds[0][endFrame];
+    if (!ep) return;
+    const x = tx(ep.x), y = ty(ep.y);
+    const radius = ag.risk === 'HIGH' ? SCALE * 3.0 : ag.risk === 'MED' ? SCALE * 2.2 : SCALE * 1.5;
+    const col = ag.risk === 'HIGH' ? 'rgba(255,61,85,' : ag.risk === 'MED' ? 'rgba(255,184,0,' : 'rgba(0,232,122,';
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    grd.addColorStop(0, col + '.16)');
+    grd.addColorStop(.6, col + '.07)');
+    grd.addColorStop(1, col + '0)');
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI*2);
+    ctx.fillStyle = grd; ctx.fill();
+  });
+}
+
+function drawAllAgents() {
+  AGENTS.forEach(ag => drawAgent(ag));
+}
+
+function drawAgent(ag) {
+  const f = frame;
+  const inPred = isPredicting(ag, frame);
+  const isActive = ag.id === activeAgent;
+  const endFrame = Math.max(1, Math.min(Math.floor(horizonFraction * PRED_FRAMES), ag.preds[0].length - 1));
+
+  // ── Past trail ──────────────────────────────────────────────────
+  const fi = Math.floor(f * ag.speedMult);
+  const pastEnd = inPred ? ag.past.length : Math.min(fi + 1, ag.past.length);
+  const pastPts = ag.past.slice(0, pastEnd);
+  if (pastPts.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(tx(pastPts[0].x), ty(pastPts[0].y));
+    pastPts.forEach(p => ctx.lineTo(tx(p.x), ty(p.y)));
+    ctx.strokeStyle = ag.isCar ? ag.color : '#4d9fff';
+    ctx.lineWidth = isActive ? 2.5 : (ag.isCar ? 1.5 : 1.2);
+    ctx.setLineDash([]);
+    ctx.globalAlpha = isActive ? 1 : .4;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // ── Prediction trails (all 3 paths as dashed lines) ─────────────
+  const pathCols = ['#00e87a', '#ffb800', '#ff3d55'];
+  const pathNames = ['p1', 'p2', 'p3'];
+  const pastEnd2 = ag.past[ag.past.length - 1];
+
+  ag.preds.forEach((pred, pi) => {
+    if (!layers[pathNames[pi]]) return;
+    const pts = pred.slice(0, endFrame + 1);
+    if (pts.length < 2) return;
+
+    // When car is braking: dim the straight path, glow the braking path
+    let alpha = isActive ? ag.probWeights[pi] : ag.probWeights[pi] * .22;
+    let lw = isActive ? (2.5 * ag.probWeights[pi] + .5) : .8;
+    if (ag.isCar && ag.braking) {
+      if (pi === 2) { alpha = isActive ? .95 : .5; lw = isActive ? 3 : 1.4; } // braking path — bright
+      else          { alpha *= .25; lw *= .5; }                                 // others — faded
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(tx(pastEnd2.x), ty(pastEnd2.y));
+    pts.forEach(p => ctx.lineTo(tx(p.x), ty(p.y)));
+    // Braking path glows green regardless of pathCols[2] being red
+    ctx.strokeStyle = (ag.isCar && ag.braking && pi === 2) ? '#00e87a' : pathCols[pi];
+    ctx.lineWidth = lw;
+    ctx.setLineDash([5, 4]);
+    ctx.globalAlpha = alpha;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+
+    if (layers.uncert && isActive) {
+      const ep = pts[pts.length - 1];
+      const r = SCALE * (1 - ag.probWeights[pi]) * 1.4;
+      ctx.beginPath(); ctx.arc(tx(ep.x), ty(ep.y), r, 0, Math.PI * 2);
+      ctx.strokeStyle = pathCols[pi];
+      ctx.lineWidth = .8; ctx.globalAlpha = .28;
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    if (isActive) {
+      const ep = pts[pts.length - 1];
+      ctx.beginPath(); ctx.arc(tx(ep.x), ty(ep.y), 3, 0, Math.PI * 2);
+      ctx.fillStyle = (ag.isCar && ag.braking && pi === 2) ? '#00e87a' : pathCols[pi];
+      ctx.globalAlpha = ag.probWeights[pi];
+      ctx.fill(); ctx.globalAlpha = 1;
+    }
+  });
+
+  // ── Pred-phase animated trail (active agent only) ───────────────
+  if (inPred && isActive) {
+    const activePath = ag.preds[ag.activePred || 0];
+    const eff = ag.isCar && ag.braking ? ag.speedMult * 0.35 : ag.speedMult;
+    const predF = Math.min(Math.floor(frame * eff) - PAST_FRAMES, activePath.length - 1);
+    const predTrail = activePath.slice(0, predF + 1);
+    if (predTrail.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(tx(pastEnd2.x), ty(pastEnd2.y));
+      predTrail.forEach(p => ctx.lineTo(tx(p.x), ty(p.y)));
+      ctx.strokeStyle = (ag.isCar && ag.braking) ? '#ffb800' : '#00e87a';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([]); ctx.globalAlpha = .9;
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  }
+
+  // ── Agent dot / car rectangle ───────────────────────────────────
+  const cur = getAgentPos(ag, frame);
+  const cx2 = tx(cur.x), cy2 = ty(cur.y);
+  const dotColor = (inPred && isActive) ? '#00e87a' : ag.color;
+
+  if (isActive) {
+    const grd = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, SCALE);
+    grd.addColorStop(0, dotColor + '40');
+    grd.addColorStop(1, dotColor + '00');
+    ctx.beginPath(); ctx.arc(cx2, cy2, SCALE, 0, Math.PI * 2);
+    ctx.fillStyle = grd; ctx.fill();
+  }
+
+  if (ag.isCar) {
+    const prevPos = getAgentPos(ag, Math.max(0, frame - 0.5));
+    const angle = Math.atan2(cur.y - prevPos.y, cur.x - prevPos.x);
+    const cw = SCALE * 1.0, ch = SCALE * 0.55;
+    // Braking car turns amber; normal car keeps its color
+    const carFill = ag.braking ? '#ffb800' : dotColor;
+    // Pulsing glow when braking
+    if (ag.braking) {
+      const pulse = .15 + .10 * Math.sin(frame * .4);
+      const grd2 = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, SCALE * 1.8);
+      grd2.addColorStop(0, `rgba(255,184,0,${pulse})`);
+      grd2.addColorStop(1, 'rgba(255,184,0,0)');
+      ctx.beginPath(); ctx.arc(cx2, cy2, SCALE * 1.8, 0, Math.PI * 2);
+      ctx.fillStyle = grd2; ctx.fill();
+    }
+    ctx.save();
+    ctx.translate(cx2, cy2);
+    ctx.rotate(angle);
+    ctx.fillStyle = carFill;
+    ctx.globalAlpha = isActive ? 1 : .65;
+    ctx.fillRect(-cw/2, -ch/2, cw, ch);
+    ctx.fillStyle = 'rgba(255,255,255,.18)';
+    ctx.fillRect(cw/2 - cw*.35, -ch/2 + 2, cw*.3, ch - 4);
+    ctx.strokeStyle = ag.braking ? 'rgba(255,184,0,.7)' : 'rgba(255,255,255,.25)';
+    ctx.lineWidth = ag.braking ? 1.5 : 1;
+    ctx.strokeRect(-cw/2, -ch/2, cw, ch);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+
+    // BRAKING label above car
+    if (ag.braking) {
+      const pulse = .6 + .4 * Math.sin(frame * .5);
+      ctx.font = '500 9px "Space Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(255,184,0,${pulse})`;
+      ctx.fillText('BRAKING', cx2, cy2 - SCALE * .65);
+      ctx.textAlign = 'left';
+    }
+  } else {
+    const r = isActive ? 7 : 5;
+    ctx.beginPath(); ctx.arc(cx2, cy2, r, 0, Math.PI * 2);
+    ctx.fillStyle = dotColor;
+    ctx.globalAlpha = isActive ? 1 : .55;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.3)';
+    ctx.lineWidth = 1; ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Heading arrow (non-car active agents)
+  if (isActive && !ag.isCar) {
+    const prevPos = getAgentPos(ag, Math.max(0, frame - 1));
+    if (cur.x !== prevPos.x || cur.y !== prevPos.y) {
+      const angle = Math.atan2(cur.y - prevPos.y, cur.x - prevPos.x);
+      ctx.beginPath();
+      ctx.moveTo(cx2, cy2);
+      ctx.lineTo(cx2 + Math.cos(angle)*SCALE*.9, cy2 + Math.sin(angle)*SCALE*.9);
+      ctx.strokeStyle = dotColor; ctx.lineWidth = 2; ctx.stroke();
+    }
+  }
+}
+
+function drawIntentLabels() {
+  AGENTS.forEach(ag => {
+    const isActive = ag.id === activeAgent;
+    const cur = getAgentPos(ag, frame);
+    const cx2 = tx(cur.x), cy2 = ty(cur.y);
+    const label = ag.intIcon + ' ' + ag.intent;
+    const fSize = isActive ? 12 : 10;
+    ctx.font = `${isActive ? 500 : 400} ${fSize}px 'DM Sans', sans-serif`;
+    const tw = ctx.measureText(label).width;
+    const pad = 5, py = cy2 - (isActive ? 18 : 15);
+    ctx.fillStyle = isActive ? ag.color + '30' : '#0e111730';
+    ctx.beginPath();
+    const bx = cx2 - tw/2 - pad;
+    roundRect(ctx, bx, py - fSize - 2, tw + pad*2, fSize + 8, 4);
+    ctx.fill();
+    ctx.fillStyle = isActive ? ag.color : '#6b7585';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, cx2, py);
+    ctx.textAlign = 'left';
+  });
+}
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath(); c.moveTo(x+r, y);
+  c.lineTo(x+w-r, y); c.arcTo(x+w,y, x+w,y+r, r);
+  c.lineTo(x+w, y+h-r); c.arcTo(x+w,y+h, x+w-r,y+h, r);
+  c.lineTo(x+r, y+h); c.arcTo(x,y+h, x,y+h-r, r);
+  c.lineTo(x, y+r); c.arcTo(x,y, x+r,y, r);
+  c.closePath();
+}
+
+// ─── ANIMATION ────────────────────────────────────────────────────
+// Frame 0–19  → agent moves along past history
+// Frame 20–49 → agent moves along preds[0] (most likely future)
+// Then loops back to 0
+const TOTAL_FRAMES = PAST_FRAMES + PRED_FRAMES;
+
+function getAgentPos(ag, f) {
+  const delay = ag.delay || 0;
+  if (f < delay) return ag.past[0];
+  // speedMult makes each agent traverse its path array at different rates
+  // Braking cars use activePred path (index 2) and get slowed down
+  const eff = ag.isCar && ag.braking ? ag.speedMult * 0.35 : ag.speedMult;
+  const fi = Math.floor(f * eff);
+  const pred = ag.preds[ag.activePred || 0];
+  if (fi < ag.past.length) {
+    return ag.past[Math.min(fi, ag.past.length - 1)];
+  }
+  const predIdx = Math.min(fi - ag.past.length, pred.length - 1);
+  return pred[predIdx];
+}
+
+function isPredicting(ag, f) {
+  const eff = ag.isCar && ag.braking ? ag.speedMult * 0.35 : ag.speedMult;
+  return Math.floor(f * eff) >= PAST_FRAMES;
+}
+
+// ─── COLLISION DETECTION FOR CARS ────────────────────────────────
+const COLLISION_THRESHOLD = 2.2; // world units
+
+function updateCarBraking() {
+  const nonCars = AGENTS.filter(a => !a.isCar);
+  AGENTS.filter(a => a.isCar).forEach(car => {
+    let detected = false;
+    // Check if car's STRAIGHT path (preds[0]) comes near any non-car agent's preds[0]
+    const LOOKAHEAD = 18; // frames (~short future)
+    for (let t = 0; t < Math.min(LOOKAHEAD, car.preds[0].length); t++){
+      const cp = car.preds[0][t];
+
+      nonCars.forEach(ag => {
+        const ap = ag.preds[0][t];
+        if (!ap) return;
+
+        const dist = Math.hypot(cp.x - ap.x, cp.y - ap.y);
+
+// only react if collision is soon enough
+        if (dist < COLLISION_THRESHOLD) {
+        detected = true;
+        }  
+      });
+    }
+    const wasBraking = car.braking;
+    if (detected) {
+      car.braking = true;
+      car.brakeTimer = 20; // hold braking for some frames
+    } else {
+      car.brakeTimer = Math.max(0, (car.brakeTimer || 0) - 1);
+      if (car.brakeTimer === 0) {
+        car.braking = false;
+      }
+    }
+    car.activePred = car.braking ? 2 : 0;
+    const targetSpeed = car.braking ? 1.0 : 1.6;
+    car.speedMult += (targetSpeed - car.speedMult) * 0.08;
+    // Update intent label
+    const newIntent = detected ? 'Braking' : 'Straight';
+    if (car.intent !== newIntent) {
+      car.intent = newIntent;
+      car.intConf = detected ? [.04, .10, .86] : [.88, .09, .03];
+      if (car.id === activeAgent) updateSidebarInfo();
+      buildAgentList();
+    }
+  });
+}
+
+function step() {
+  frame = (frame + .4) % TOTAL_FRAMES;
+  updateCarBraking();
+  draw();
+  animId = requestAnimationFrame(step);
+}
+
+function togglePlay() {
+  playing = !playing;
+  const btn = document.getElementById('btn-play');
+  if (playing) {
+    btn.textContent = '⏸ PAUSE';
+    animId = requestAnimationFrame(step);
+  } else {
+    btn.textContent = '▶ PLAY';
+    cancelAnimationFrame(animId);
+  }
+}
+
+// ─── AGENT LIST ────────────────────────────────────────────────────
+function buildAgentList() {
+  const list = document.getElementById('agent-list');
+  list.innerHTML = '';
+  AGENTS.forEach(ag => {
+    const item = document.createElement('div');
+    item.className = 'agent-item' + (ag.id === activeAgent ? ' active' : '');
+    item.innerHTML = `
+      <div class="agent-dot" style="background:${ag.color}"></div>
+      <div class="agent-info">
+        <div class="agent-name">${ag.name}</div>
+        <div class="agent-type">${ag.type} · ${ag.speed} m/s</div>
+      </div>
+      <div class="agent-risk risk-${ag.risk.toLowerCase()}">${ag.risk}</div>`;
+    item.onclick = () => selectAgent(ag.id);
+    list.appendChild(item);
+  });
+}
+
+function selectAgent(id) {
+  activeAgent = id;
+  buildAgentList();
+  updateSidebarInfo();
+  if (!playing) draw();
+}
+
+// ─── SIDEBAR INFO ──────────────────────────────────────────────────
+const intents = {
+  Crossing: {icon:'🚶', sub:'Road crossing detected',      col:'var(--red-dim)'},
+  Walking:  {icon:'🚶', sub:'Lateral movement pattern',    col:'var(--amber-dim)'},
+  Stopped:  {icon:'🧍', sub:'Stationary or near-stopped',  col:'var(--green-dim)'},
+  Cycling:  {icon:'🚴', sub:'Active cycling — sharing road',col:'var(--green-dim)'},
+  Roaming:  {icon:'🐕', sub:'Erratic animal movement',     col:'var(--red-dim)'},
+  Grazing:  {icon:'🐄', sub:'Slow animal blocking road',   col:'var(--red-dim)'},
+  Straight: {icon:'🚗', sub:'Maintaining current heading', col:'var(--blue-dim)'},
+  Turning:  {icon:'🚗', sub:'Lane change detected',        col:'var(--amber-dim)'},
+  Braking:  {icon:'🚗', sub:'Deceleration detected',       col:'var(--green-dim)'},
+};
+const intentColorMap = {
+  Crossing:'var(--red)', Walking:'var(--amber)', Stopped:'var(--green)',
+  Cycling:'var(--green)', Roaming:'var(--red)', Grazing:'var(--red)',
+  Straight:'var(--blue)', Turning:'var(--amber)', Braking:'var(--green)',
+};
+
+// ─── COLLISION SCORE ──────────────────────────────────────────────
+function computeCollisionScore(ag) {
+  const THRESHOLD = 2.5;
+  const cars = AGENTS.filter(a => a.isCar);
+  let maxScore = 0;
+
+  cars.forEach(car => {
+    for (let t = 0; t < car.preds[0].length; t++) {
+      const cp = car.preds[0][t];
+      const ap = ag.preds[0][t];
+      if (!cp || !ap) continue;
+
+      const dist = Math.hypot(cp.x - ap.x, cp.y - ap.y);
+      const score = Math.max(0, 1 - dist / THRESHOLD);
+      if (score > maxScore) maxScore = score;
+    }
+  });
+
+  return maxScore;
+}
+
+function updateSidebarInfo() {
+  const ag = AGENTS[activeAgent];
+  const info = intents[ag.intent] || intents['Walking'];
+  document.getElementById('intent-icon').style.background = info.col;
+  document.getElementById('intent-icon').textContent = info.icon;
+  document.getElementById('intent-label').textContent = ag.intent;
+  document.getElementById('intent-sub').textContent = info.sub;
+
+  // Dynamic confidence bars using agent's own intClasses
+  const bars = document.getElementById('conf-bars');
+  bars.innerHTML = '';
+  ag.intClasses.forEach((cls, i) => {
+    const pct = Math.round((ag.intConf[i] || 0) * 100);
+    const col = intentColorMap[cls] || 'var(--text2)';
+    bars.innerHTML += `
+      <div class="conf-row">
+        <div class="conf-name">${cls}</div>
+        <div class="conf-track" style="flex:1">
+          <div class="conf-fill" style="width:${pct}%;background:${col}"></div>
+        </div>
+        <div class="conf-pct">${pct}%</div>
+      </div>`;
+  });
+
+  // Collision score
+  if (!ag.isCar) {
+    const score = computeCollisionScore(ag);
+    const pct = Math.round(score * 100);
+    const colScore = score > .6 ? 'var(--red)' : score > .3 ? 'var(--amber)' : 'var(--green)';
+    const label = score > .6 ? 'HIGH RISK' : score > .3 ? 'MODERATE' : 'LOW RISK';
+    document.getElementById('collision-section').style.display = 'block';
+    document.getElementById('collision-bar').style.width = pct + '%';
+    document.getElementById('collision-bar').style.background = colScore;
+    document.getElementById('collision-label').textContent = label;
+    document.getElementById('collision-label').style.color = colScore;
+    document.getElementById('collision-pct').textContent = pct + '%';
+    document.getElementById('collision-pct').style.color = colScore;
+  } else {
+    document.getElementById('collision-section').style.display = 'none';
+  }
+}
+
+// ─── CONTROLS ─────────────────────────────────────────────────────
+function updateHorizon(v) {
+  horizonFraction = v / 3;
+  document.getElementById('horizon-val').textContent = v + 's';
+  if (!playing) draw();
+}
+
+function toggleLayer(key, btn) {
+  layers[key] = !layers[key];
+  btn.classList.toggle('active', layers[key]);
+  if (!playing) draw();
+}
+
+// ─── TOOLTIP ──────────────────────────────────────────────────────
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let found = null;
+  AGENTS.forEach(ag => {
+    const cur = getAgentPos(ag, frame);
+    const d = Math.hypot(tx(cur.x) - mx, ty(cur.y) - my);
+    if (d < 18) found = ag;
+  });
+  if (found) {
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX - rect.left + 14) + 'px';
+    tooltip.style.top  = (e.clientY - rect.top  - 10) + 'px';
+    document.getElementById('tt-name').textContent = found.name;
+    document.getElementById('tt-name').style.color = found.color;
+    document.getElementById('tt-intent').textContent = found.intent;
+    document.getElementById('tt-risk').textContent = found.risk;
+    document.getElementById('tt-speed').textContent = found.speed + ' m/s';
+  } else {
+    tooltip.style.display = 'none';
+  }
+});
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  AGENTS.forEach(ag => {
+    const cur = getAgentPos(ag, frame);
+    const d = Math.hypot(tx(cur.x) - mx, ty(cur.y) - my);
+    if (d < 18) selectAgent(ag.id);
+  });
+});
+
+// ─── INIT ─────────────────────────────────────────────────────────
+resize();
+updateCarBraking();
+buildAgentList();
+updateSidebarInfo();
+draw();
+</script>
+</body>
+</html>
